@@ -149,6 +149,14 @@ cargo build --locked --features flutter,hwcodec --lib --release   # -> target\re
 Windows does not use `screencapturekit`. `build.py --flutter --hwcodec` automates the same
 sequence if you prefer.
 
+**hwcodec needs an ffmpeg SDK on Windows.** The `hwcodec` feature compiles C++ that includes
+`libavcodec/avcodec.h` etc.; without a prebuilt ffmpeg (RustDesk's CI downloads one and points
+the `hwcodec` build script at it), `cargo build --features …,hwcodec` fails with
+`fatal error C1083: Cannot open include file: 'libavcodec/avcodec.h'`. For a client that only
+needs to **decode**, drop the feature — `cargo build --locked --features flutter --lib --release`
+— and RustDesk uses software VP9/VP8/AV1 (the fps patch targets VP9 anyway). Add hwcodec back
+only when you wire up the ffmpeg SDK for hardware decode.
+
 ## Testing the UDP path
 
 1. Both host and client run a `rentamac-improvements` build.
