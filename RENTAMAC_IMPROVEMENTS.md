@@ -140,8 +140,15 @@ git submodule update --init --recursive --depth 1
 (cd flutter; flutter pub get)                    # after pinning extended_text to 13.0.0
 & "$env:VCPKG_ROOT\vcpkg.exe" install --triplet x64-windows-static
 
-# per build.py's build_flutter_windows:
-cargo build --locked --features flutter,hwcodec --lib --release   # -> target\release\librustdesk.dll
+# REQUIRED: generate the (gitignored) Rust bridge before building
+cargo install cargo-expand --version 1.0.95 --locked
+cargo install flutter_rust_bridge_codegen --version 1.80.1 --features uuid --locked
+flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs `
+  --dart-output ./flutter/lib/generated_bridge.dart `
+  --c-output ./flutter/windows/runner/bridge_generated.h
+
+# decode-only client (no hwcodec -> no ffmpeg SDK needed; software VP9):
+cargo build --locked --features flutter --lib --release      # -> target\release\librustdesk.dll
 (cd flutter; flutter build windows --release)
 # -> flutter\build\windows\x64\runner\Release\rustdesk.exe
 ```
@@ -180,5 +187,9 @@ only when you wire up the ffmpeg SDK for hardware decode.
   newer tag deliberately and update the pins together.
 - The direct-IP UDP server is single-session by design (single-tenant hosts). Multi-session
   would need packet demux on one socket (a `send_to`-based server mode in `kcp_stream.rs`).
-- Changes here don't touch `src/flutter_ffi.rs`, so the committed `generated_bridge.dart`
-  stays valid; regenerate only if you change the FFI surface.
+- **Always run `flutter_rust_bridge_codegen` before building** (both platforms). The Rust side
+  it emits — `src/bridge_generated.rs` / `bridge_generated.io.rs` — is **gitignored**, so
+  `mod bridge_generated;` in `lib.rs` fails to compile without it (E0583, then cascading
+  `EventToUI: IntoIntoDart` E0277s). Needs `cargo-expand` 1.0.95 + `flutter_rust_bridge_codegen`
+  1.80.1 installed. Our changes don't alter `src/flutter_ffi.rs`, so the generated content is
+  the stock 1.4.8 bridge — but you still must generate it locally each fresh checkout.
