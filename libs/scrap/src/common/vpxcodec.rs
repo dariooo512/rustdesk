@@ -129,7 +129,10 @@ impl EncoderApi for VpxEncoder {
                     Higher numbers (7 or 8) will be lower quality but more manageable for lower latency
                     use cases and also for lower CPU power devices such as mobile.
                     */
-                    call_vpx!(vpx_codec_control_(&mut ctx, VP8E_SET_CPUUSED as _, 7,));
+                    // RentaMac patch: 7 -> 8 (fastest real-time speed) to raise the
+                    // software VP9 encode throughput on the Mac host so it can sustain
+                    // 60fps at 1080p; bitrate headroom compensates for the quality drop.
+                    call_vpx!(vpx_codec_control_(&mut ctx, VP8E_SET_CPUUSED as _, 8,));
                     // set row level multi-threading
                     /*
                     as some people in comments and below have already commented,
