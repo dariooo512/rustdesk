@@ -1106,7 +1106,14 @@ pub fn get_ipv6_punch_enabled() -> bool {
 
 pub fn get_local_option(key: &str) -> String {
     let v = LocalConfig::get_option(key);
-    if key == keys::OPTION_ENABLE_UDP_PUNCH || key == keys::OPTION_ENABLE_IPV6_PUNCH {
+    // RentaMac: default UDP hole punch ON so direct-IP connections use KCP without a
+    // manual toggle. An explicit "N" from the UI toggle still wins (v is non-empty then).
+    if key == keys::OPTION_ENABLE_UDP_PUNCH {
+        if v.is_empty() {
+            return "Y".to_owned();
+        }
+    }
+    if key == keys::OPTION_ENABLE_IPV6_PUNCH {
         if v.is_empty() {
             if !is_public(&Config::get_rendezvous_server()) {
                 return "N".to_owned();
