@@ -181,6 +181,9 @@ class _ViewCameraTabPageState extends State<ViewCameraTabPage> {
                     height: themeConf.iconSize,
                   ).paddingOnly(right: 5),
                 ),
+                // RentaMac: UDP/KCP vs TCP transport indicator.
+                buildTransportIndicator(
+                    connectionType.stream_type.value, themeConf.iconSize),
                 label,
                 unreadMessageCountBuilder(UnreadChatCountState.find(key))
                     .marginOnly(left: 4),
