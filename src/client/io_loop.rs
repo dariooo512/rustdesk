@@ -1196,17 +1196,23 @@ impl<T: InvokeUiSession> Remote<T> {
             if ctl.inactive_counter > inactive_threshold {
                 return None;
             }
-            if len > 1 && last_auto_fps > limited_fps || len > std::cmp::max(1, decode_fps / 2) {
+            // RentaMac pacer: tolerate a small standing jitter-buffer (PACE_BUFFER)
+            // so the client does not ask the host to slow down just because the
+            // presentation pacer is intentionally holding a couple of frames.
+            let pace_buffer = 4;
+            if len > pace_buffer && last_auto_fps > limited_fps
+                || len > std::cmp::max(pace_buffer, decode_fps / 2)
+            {
                 ctl.idle_counter = 0;
                 return Some(false);
             }
-            if len <= 1 {
+            if len <= pace_buffer {
                 ctl.idle_counter += 1;
                 if ctl.idle_counter > 3 && last_auto_fps + 3 <= limited_fps {
                     return Some(true);
                 }
             }
-            if len > 1 {
+            if len > pace_buffer {
                 ctl.idle_counter = 0;
             }
             None

@@ -2875,6 +2875,21 @@ pub fn start_video_thread<F, T>(
         let mut count = 0;
         let mut duration = std::time::Duration::ZERO;
         let mut skip_beginning = 0;
+        // RentaMac level-1 jitter buffer (client-side presentation pacer).
+        // Stock RustDesk presents each frame the instant it decodes, so uneven
+        // network arrival shows up as micro-stutter. Here we smooth the real
+        // inter-frame arrival cadence and release frames at even intervals while
+        // holding a small standing buffer, trading ~1-2 frames of latency for
+        // even pacing (the same trade Parsec/DeskIn make). Opt-out: env
+        // RENTAMAC_PACER=0.
+        let pacer_enabled = std::env::var("RENTAMAC_PACER")
+            .map(|v| v != "0" && v.to_lowercase() != "off")
+            .unwrap_or(true);
+        let mut last_arrival: Option<std::time::Instant> = None;
+        let mut last_present: Option<std::time::Instant> = None;
+        let mut smoothed_ms: f64 = 33.0;
+        const PACE_BUFFER_TARGET: usize = 2;
+        const PACE_MAX_BUFFER: usize = 5;
         loop {
             if let Ok(data) = video_receiver.recv() {
                 match data {
@@ -2900,6 +2915,17 @@ pub fn start_video_thread<F, T>(
                             }
                         };
                         let display = vf.display as usize;
+                        // RentaMac pacer: track smoothed inter-frame arrival interval.
+                        if pacer_enabled {
+                            let now = std::time::Instant::now();
+                            if let Some(la) = last_arrival {
+                                let dt_ms = now.duration_since(la).as_secs_f64() * 1000.0;
+                                if dt_ms > 0.5 && dt_ms < 500.0 {
+                                    smoothed_ms = smoothed_ms * 0.875 + dt_ms * 0.125;
+                                }
+                            }
+                            last_arrival = Some(now);
+                        }
                         let start = std::time::Instant::now();
                         let format = CodecFormat::from(&vf);
                         if video_handler.is_none() {
@@ -2918,6 +2944,27 @@ pub fn start_video_thread<F, T>(
                             let format_changed = handler.decoder.format() != format;
                             match handler.handle_frame(vf, &mut pixelbuffer, &mut tmp_chroma) {
                                 Ok(true) => {
+                                    // RentaMac pacer: release at even intervals when we
+                                    // have buffer to spare; present immediately on
+                                    // underrun (qlen<target) or overrun (qlen>=max) so
+                                    // latency stays bounded.
+                                    if pacer_enabled {
+                                        let qlen = video_queue.read().unwrap().len();
+                                        if qlen < PACE_MAX_BUFFER {
+                                            if let (Some(lp), true) =
+                                                (last_present, qlen >= PACE_BUFFER_TARGET)
+                                            {
+                                                let interval = std::time::Duration::from_secs_f64(
+                                                    smoothed_ms.clamp(8.0, 100.0) / 1000.0,
+                                                );
+                                                let elapsed = lp.elapsed();
+                                                if elapsed < interval {
+                                                    std::thread::sleep(interval - elapsed);
+                                                }
+                                            }
+                                        }
+                                        last_present = Some(std::time::Instant::now());
+                                    }
                                     video_callback(
                                         display,
                                         &mut handler.rgb,
