@@ -234,6 +234,15 @@ impl Client {
         }
     }
 
+    /// RentaMac: establish a direct KCP-over-UDP connection to a reachable host
+    /// (port-forward / LAN). No hole punching: the host's direct UDP server accepts
+    /// the KCP handshake straight off its listening socket.
+    async fn connect_direct_udp(addr: &str) -> ResultType<(KcpStream, Stream)> {
+        let (socket, peer_addr) = new_direct_udp_for(addr).await?;
+        socket.connect(peer_addr).await?;
+        KcpStream::connect(socket, Duration::from_millis(CONNECT_TIMEOUT as _)).await
+    }
+
     /// Start a new connection.
     async fn _start(
         peer: &str,
@@ -257,10 +266,27 @@ impl Client {
         }
         // to-do: remember the port for each peer, so that we can retry easier
         if hbb_common::is_ip_str(peer) {
+            let addr = check_port(peer, RELAY_PORT + 1);
+            // RentaMac: try KCP-over-UDP first on a direct IP connection (reliable-UDP
+            // avoids the TCP head-of-line blocking that stutters on lossy links).
+            // Falls back to TCP if UDP is disabled, blocked, or the host is stock.
+            if crate::get_udp_punch_enabled() && !interface.is_force_relay() {
+                match Self::connect_direct_udp(&addr).await {
+                    Ok((kcp, stream)) => {
+                        return Ok((
+                            (stream, true, None, Some(kcp), "UDP"),
+                            (0, "".to_owned()),
+                            false,
+                        ));
+                    }
+                    Err(err) => {
+                        log::info!("Direct UDP/KCP to {addr} failed, falling back to TCP: {err}");
+                    }
+                }
+            }
             return Ok((
                 (
-                    connect_tcp_local(check_port(peer, RELAY_PORT + 1), None, CONNECT_TIMEOUT)
-                        .await?,
+                    connect_tcp_local(addr, None, CONNECT_TIMEOUT).await?,
                     true,
                     None,
                     None,

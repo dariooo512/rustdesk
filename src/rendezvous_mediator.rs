@@ -134,6 +134,13 @@ impl RendezvousMediator {
         tokio::spawn(async move {
             direct_server(server_cloned).await;
         });
+        // RentaMac: KCP-over-UDP direct server, alongside the TCP one on the same
+        // port, so a direct IP connection can use reliable-UDP and avoid TCP
+        // head-of-line blocking on lossy links.
+        let server_cloned = server.clone();
+        tokio::spawn(async move {
+            direct_server_udp(server_cloned).await;
+        });
         #[cfg(target_os = "android")]
         let start_lan_listening = true;
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -908,6 +915,97 @@ async fn direct_server(server: ServerPtr) {
             }
         } else {
             sleep(1.).await;
+        }
+    }
+}
+
+// RentaMac: direct KCP-over-UDP server. Binds a UDP socket on the same port as the
+// TCP direct server. Because a direct (port-forwarded / LAN) host is reachable
+// without NAT traversal, no UDP hole punching is needed: the peer's KCP SYN lands
+// here via recv_from, we dedicate the socket to that peer and hand the SYN to
+// KcpStream::accept. Serves one session at a time (single-tenant rental host);
+// concurrent peers transparently fall back to the parallel TCP direct server.
+async fn direct_server_udp(server: ServerPtr) {
+    use hbb_common::bytes::BytesMut;
+    use hbb_common::tokio::net::UdpSocket;
+    loop {
+        let disabled = !option2bool(
+            OPTION_DIRECT_SERVER,
+            &Config::get_option(OPTION_DIRECT_SERVER),
+        ) || option2bool("stop-service", &Config::get_option("stop-service"))
+            || !crate::get_udp_punch_enabled();
+        if disabled {
+            sleep(1.).await;
+            continue;
+        }
+        let port = get_direct_port();
+        let listen_addr = SocketAddr::new(std::net::Ipv4Addr::UNSPECIFIED.into(), port as u16);
+        let socket = match UdpSocket::bind(listen_addr).await {
+            Ok(s) => Arc::new(s),
+            Err(err) => {
+                log::error!("Failed to start direct UDP server on port {port}: {err}");
+                sleep(1.).await;
+                continue;
+            }
+        };
+        log::info!("Direct UDP/KCP server listening on: {port}");
+        let mut buf = vec![0u8; 1500];
+        loop {
+            let stop = !option2bool(
+                OPTION_DIRECT_SERVER,
+                &Config::get_option(OPTION_DIRECT_SERVER),
+            ) || option2bool("stop-service", &Config::get_option("stop-service"))
+                || !crate::get_udp_punch_enabled()
+                || port != get_direct_port();
+            if stop {
+                log::info!("Exit direct UDP access listen");
+                break;
+            }
+            match hbb_common::timeout(1000, socket.recv_from(&mut buf)).await {
+                Ok(Ok((n, peer_addr))) => {
+                    if n == 0 {
+                        continue;
+                    }
+                    // Dedicate this socket to the peer for the KCP session.
+                    if let Err(err) = socket.connect(peer_addr).await {
+                        log::error!("Failed to connect direct UDP socket to {peer_addr}: {err}");
+                        break;
+                    }
+                    let init = Some(BytesMut::from(&buf[..n]));
+                    match crate::kcp_stream::KcpStream::accept(
+                        socket.clone(),
+                        Duration::from_millis(CONNECT_TIMEOUT as _),
+                        init,
+                    )
+                    .await
+                    {
+                        Ok((kcp, stream)) => {
+                            log::info!("direct UDP/KCP access from {peer_addr}");
+                            allow_err!(
+                                crate::server::create_tcp_connection(
+                                    server.clone(),
+                                    stream,
+                                    peer_addr,
+                                    false,
+                                    ConnectionMeta::default(),
+                                )
+                                .await
+                            );
+                            drop(kcp);
+                        }
+                        Err(err) => {
+                            log::error!("Direct KCP accept from {peer_addr} failed: {err}");
+                        }
+                    }
+                    // The socket is now bound to this peer; rebind a fresh listener.
+                    break;
+                }
+                Ok(Err(err)) => {
+                    log::error!("Direct UDP recv_from error: {err}");
+                    break;
+                }
+                Err(_) => {}
+            }
         }
     }
 }
