@@ -31,7 +31,10 @@ delay:
 pub const FPS: u32 = 30;
 pub const MIN_FPS: u32 = 1;
 pub const MAX_FPS: u32 = 120;
-pub const INIT_FPS: u32 = 15;
+// RentaMac patch: hosts run in a datacenter with near-zero uplink latency;
+// start sessions at the ceiling and let the delay logic pull down only if a
+// customer's network is actually bad, instead of ramping up from 15/30.
+pub const INIT_FPS: u32 = 60;
 
 // Bitrate ratio constants for different quality levels
 const BR_MAX: f32 = 40.0; // 2000 * 2 / 100
@@ -248,12 +251,15 @@ impl VideoQoS {
         let target_ratio = self.latest_quality().ratio();
 
         // For bad network, small fps means quick reaction and high quality
+        // RentaMac patch: stock tiers trade fps away as bitrate rises
+        // ((8,16)/(10,20)/(12,24)), plateauing datacenter sessions near 20fps.
+        // Keep a sane floor for bad networks but let the climb reach 60.
         let (min_fps, normal_fps) = if target_ratio >= BR_BEST {
-            (8, 16)
+            (15, 60)
         } else if target_ratio >= BR_BALANCED {
-            (10, 20)
+            (15, 60)
         } else {
-            (12, 24)
+            (15, 60)
         };
 
         // Calculate minimum acceptable delay-fps product
