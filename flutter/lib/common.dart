@@ -4182,6 +4182,30 @@ String getConnectionText(bool secure, bool direct, String streamType) {
   }
 }
 
+// RentaMac: a "fast" (lightning-bolt) indicator for the session tab. Green when the
+// live connection uses the UDP/KCP transport (low latency, resistant to packet
+// loss), red when it falls back to TCP (may stutter on lossy networks). A tooltip
+// explains what the colour means.
+Widget buildTransportIndicator(String streamType, double iconSize) {
+  final isFast = streamType == 'UDP' || streamType == 'IPv6';
+  final color = isFast ? Colors.green : Colors.redAccent;
+  final title = isFast
+      ? translate('Fast connection (UDP)')
+      : translate('Standard connection (TCP)');
+  final detail = isFast
+      ? translate(
+          'Using reliable-UDP (KCP): lower latency and resistant to packet loss.')
+      : translate(
+          'Using TCP: UDP was unavailable; the connection may stutter on lossy networks.');
+  return Tooltip(
+    message: '$title\n$detail',
+    child: Padding(
+      padding: const EdgeInsets.only(right: 5),
+      child: Icon(Icons.bolt, color: color, size: iconSize),
+    ),
+  );
+}
+
 String decode_http_response(http.Response resp) {
   try {
     // https://github.com/rustdesk/rustdesk-server-pro/discussions/758
