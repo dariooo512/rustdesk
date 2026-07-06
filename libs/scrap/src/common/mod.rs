@@ -8,8 +8,8 @@ use std::{ffi::c_void, slice};
 
 cfg_if! {
     if #[cfg(quartz)] {
-        mod quartz;
-        pub use self::quartz::*;
+        mod mac;
+        pub use self::mac::*;
     } else if #[cfg(x11)] {
         cfg_if! {
             if #[cfg(feature="wayland")] {
