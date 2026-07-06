@@ -934,12 +934,28 @@ impl Client {
         conn_type: ConnType,
         ipv4: bool,
     ) -> ResultType<Stream> {
-        let mut conn = connect_tcp(
-            ipv4_to_ipv6(check_port(relay_server, RELAY_PORT), ipv4),
-            CONNECT_TIMEOUT,
-        )
-        .await
-        .with_context(|| "Failed to connect to relay server")?;
+        let addr = ipv4_to_ipv6(check_port(relay_server, RELAY_PORT), ipv4);
+        // RentaMac: prefer KCP-over-UDP to the relay for lower latency (reliable-UDP
+        // avoids the TCP head-of-line blocking that stutters on lossy links). Falls
+        // back to TCP if UDP is disabled, blocked, or the relay is stock (no KCP).
+        let mut conn = if crate::get_udp_punch_enabled() {
+            match Self::create_relay_udp(&addr).await {
+                Ok(conn) => {
+                    log::info!("relay via KCP/UDP to {addr}");
+                    conn
+                }
+                Err(err) => {
+                    log::info!("KCP relay to {addr} failed, falling back to TCP: {err}");
+                    connect_tcp(addr, CONNECT_TIMEOUT)
+                        .await
+                        .with_context(|| "Failed to connect to relay server")?
+                }
+            }
+        } else {
+            connect_tcp(addr, CONNECT_TIMEOUT)
+                .await
+                .with_context(|| "Failed to connect to relay server")?
+        };
         let mut msg_out = RendezvousMessage::new();
         msg_out.set_request_relay(RequestRelay {
             licence_key: key.to_owned(),
@@ -950,6 +966,14 @@ impl Client {
         });
         conn.send(&msg_out).await?;
         Ok(conn)
+    }
+
+    /// RentaMac: connect to the relay server over KCP-over-UDP, returning a
+    /// self-contained stream (see `KcpStream::connect_owned`).
+    async fn create_relay_udp(addr: &str) -> ResultType<Stream> {
+        let (socket, peer_addr) = new_direct_udp_for(addr).await?;
+        socket.connect(peer_addr).await?;
+        KcpStream::connect_owned(socket, Duration::from_millis(CONNECT_TIMEOUT as _)).await
     }
 
     #[inline]
