@@ -321,11 +321,23 @@ async fn create_relay_connection_(
     ipv4: bool,
     control_permissions: Option<ControlPermissions>,
 ) -> ResultType<()> {
-    let mut stream = socket_client::connect_tcp(
-        socket_client::ipv4_to_ipv6(crate::check_port(relay_server, RELAY_PORT), ipv4),
-        CONNECT_TIMEOUT,
-    )
-    .await?;
+    let addr = socket_client::ipv4_to_ipv6(crate::check_port(relay_server, RELAY_PORT), ipv4);
+    // RentaMac: prefer a KCP-over-UDP relay leg (matches the patched hbbr + client);
+    // fall back to TCP if UDP is disabled, blocked, or the relay is stock (no KCP).
+    let mut stream = if crate::get_udp_punch_enabled() {
+        match relay_connect_udp(&addr).await {
+            Ok(s) => {
+                log::info!("host relay via KCP/UDP to {addr}");
+                s
+            }
+            Err(err) => {
+                log::info!("host KCP relay to {addr} failed, TCP fallback: {err}");
+                socket_client::connect_tcp(addr, CONNECT_TIMEOUT).await?
+            }
+        }
+    } else {
+        socket_client::connect_tcp(addr, CONNECT_TIMEOUT).await?
+    };
     let mut msg_out = RendezvousMessage::new();
     let licence_key = crate::get_key(true).await;
     msg_out.set_request_relay(RequestRelay {
@@ -336,6 +348,14 @@ async fn create_relay_connection_(
     stream.send(&msg_out).await?;
     create_tcp_connection(server, stream, peer_addr, secure, control_permissions).await?;
     Ok(())
+}
+
+/// RentaMac: connect the host's relay leg over KCP-over-UDP (self-contained stream).
+async fn relay_connect_udp(addr: &str) -> ResultType<Stream> {
+    let (socket, peer_addr) = socket_client::new_direct_udp_for(addr).await?;
+    socket.connect(peer_addr).await?;
+    crate::kcp_stream::KcpStream::connect_owned(socket, Duration::from_millis(CONNECT_TIMEOUT as _))
+        .await
 }
 
 impl Server {
