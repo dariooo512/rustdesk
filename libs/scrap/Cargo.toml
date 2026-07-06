@@ -31,6 +31,10 @@ features = ["dxgi", "dxgi1_2", "dxgi1_5", "d3d11", "winuser", "winerror", "errha
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
+# ScreenCaptureKit video backend (raw FFI). These are already resolved in the
+# workspace lockfile via the top-level crate, so they add no new dependencies.
+objc = "0.2"
+core-foundation = "0.9"
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.13"

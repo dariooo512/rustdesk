@@ -11,6 +11,9 @@ pub use common::*;
 #[cfg(quartz)]
 pub mod quartz;
 
+#[cfg(quartz)]
+pub mod screencapturekit;
+
 #[cfg(x11)]
 pub mod x11;
 
