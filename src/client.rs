@@ -587,8 +587,17 @@ impl Client {
                         );
                         connect_futures.push(
                             async move {
-                                let conn = fut.await?;
-                                Ok((conn, None, if use_ws() { "WebSocket" } else { "Relay" }))
+                                let (conn, is_kcp) = fut.await?;
+                                // Report KCP relays as UDP so the transport
+                                // indicator is green instead of the default TCP.
+                                let typ = if use_ws() {
+                                    "WebSocket"
+                                } else if is_kcp {
+                                    "UDP"
+                                } else {
+                                    "Relay"
+                                };
+                                Ok((conn, None, typ))
                             }
                             .boxed(),
                         );
@@ -742,7 +751,7 @@ impl Client {
         let mut direct = !conn.is_err();
         if interface.is_force_relay() || conn.is_err() {
             if !relay_server.is_empty() {
-                conn = Self::request_relay(
+                match Self::request_relay(
                     peer_id,
                     relay_server.to_owned(),
                     rendezvous_server,
@@ -751,13 +760,20 @@ impl Client {
                     token,
                     conn_type,
                 )
-                .await;
-                if let Err(e) = conn {
-                    // this direct is mainly used by on_establish_connection_error, so we update it here before bail
-                    interface.update_direct(Some(false));
-                    bail!("Failed to connect via relay server: {}", e);
+                .await
+                {
+                    Ok((relay_conn, is_kcp)) => {
+                        conn = Ok(relay_conn);
+                        // Report KCP relays as UDP so the transport indicator is
+                        // green (fast) instead of the default red TCP.
+                        typ = if is_kcp { "UDP" } else { "Relay" };
+                    }
+                    Err(e) => {
+                        // this direct is mainly used by on_establish_connection_error, so we update it here before bail
+                        interface.update_direct(Some(false));
+                        bail!("Failed to connect via relay server: {}", e);
+                    }
                 }
-                typ = "Relay";
                 direct = false;
             } else {
                 bail!("Failed to make direct connection to remote desktop");
@@ -870,7 +886,7 @@ impl Client {
         key: &str,
         token: &str,
         conn_type: ConnType,
-    ) -> ResultType<Stream> {
+    ) -> ResultType<(Stream, bool)> {
         let mut succeed = false;
         let mut uuid = "".to_owned();
         let mut ipv4 = true;
@@ -933,15 +949,19 @@ impl Client {
         key: &str,
         conn_type: ConnType,
         ipv4: bool,
-    ) -> ResultType<Stream> {
+    ) -> ResultType<(Stream, bool)> {
         let addr = ipv4_to_ipv6(check_port(relay_server, RELAY_PORT), ipv4);
         // RentaMac: prefer KCP-over-UDP to the relay for lower latency (reliable-UDP
         // avoids the TCP head-of-line blocking that stutters on lossy links). Falls
         // back to TCP if UDP is disabled, blocked, or the relay is stock (no KCP).
+        // The returned bool reports whether the KCP/UDP path was used (for the UI
+        // transport indicator, so a KCP relay shows as UDP instead of TCP).
+        let mut is_kcp = false;
         let mut conn = if crate::get_udp_punch_enabled() {
             match Self::create_relay_udp(&addr).await {
                 Ok(conn) => {
                     log::info!("relay via KCP/UDP to {addr}");
+                    is_kcp = true;
                     conn
                 }
                 Err(err) => {
@@ -965,7 +985,7 @@ impl Client {
             ..Default::default()
         });
         conn.send(&msg_out).await?;
-        Ok(conn)
+        Ok((conn, is_kcp))
     }
 
     /// RentaMac: connect to the relay server over KCP-over-UDP, returning a
