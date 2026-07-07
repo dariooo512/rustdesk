@@ -26,7 +26,10 @@ use hwcodec::{
 };
 
 const DEFAULT_PIXFMT: AVPixelFormat = AVPixelFormat::AV_PIX_FMT_NV12;
-pub const DEFAULT_FPS: i32 = 30;
+// RentaMac patch: 30 -> 60. The encoder context's fps is fixed at creation and acts
+// as a frame-rate ceiling for hardware (VideoToolbox) H264/H265 sessions; 30 capped
+// hw-encoded streams at 30fps regardless of client settings.
+pub const DEFAULT_FPS: i32 = 60;
 const DEFAULT_GOP: i32 = i32::MAX;
 const DEFAULT_HW_QUALITY: Quality = Quality_Default;
 pub const ERR_HEVC_POC: i32 = HwcodecErrno::HWCODEC_ERR_HEVC_COULD_NOT_FIND_POC as i32;

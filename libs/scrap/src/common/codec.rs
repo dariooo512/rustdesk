@@ -972,6 +972,18 @@ pub fn base_bitrate(width: u32, height: u32) -> u32 {
 
 pub fn codec_thread_num(limit: usize) -> usize {
     let max: usize = num_cpus::get();
+    // RentaMac: allow pinning the encoder thread count without a rebuild
+    // (`launchctl setenv RENTAMAC_ENC_THREADS 8` + app restart), for tuning
+    // single-tenant hosts where encoding is the primary workload.
+    if let Ok(v) = std::env::var("RENTAMAC_ENC_THREADS") {
+        if let Ok(n) = v.parse::<usize>() {
+            if n >= 1 {
+                let n = std::cmp::min(n, std::cmp::min(max, limit));
+                log::info!("codec thread override via RENTAMAC_ENC_THREADS: {n}");
+                return n;
+            }
+        }
+    }
     let mut res;
     let info;
     let mut s = System::new();
