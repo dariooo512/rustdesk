@@ -987,7 +987,7 @@ async fn direct_server_udp(server: ServerPtr) {
                                     stream,
                                     peer_addr,
                                     false,
-                                    None, // Direct connections don't have control_permissions
+                                    ConnectionMeta::default(), // Direct connections don't have server-side user context.
                                 )
                                 .await
                             );
