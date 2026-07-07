@@ -997,7 +997,11 @@ pub fn codec_thread_num(limit: usize) -> usize {
         res = (((max as f64) - avg.one) * 0.5).round() as usize;
     }
     res = std::cmp::min(res, max / 2);
-    res = std::cmp::min(res, memory as usize / 2);
+    // sysinfo available_memory() reads 0 on macOS 26; a 0 GiB cap would clamp encoding
+    // to a single thread (2-11 fps at 1080p), so only apply the RAM cap when the probe works.
+    if memory > 0 {
+        res = std::cmp::min(res, memory as usize / 2);
+    }
     //  Use common thread count
     res = match res {
         _ if res >= 64 => 64,
